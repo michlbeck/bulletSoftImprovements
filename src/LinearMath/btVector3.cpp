@@ -38,6 +38,7 @@ typedef  float float4 __attribute__ ((vector_size(16)));
 #define STACK_ARRAY_COUNT   (1UL << LOG2_ARRAY_SIZE)
 
 #include <emmintrin.h>
+#include <string.h>
 
 long _maxdot_large( const float *vv, const float *vec, unsigned long count, float *dotResult );
 long _maxdot_large( const float *vv, const float *vec, unsigned long count, float *dotResult )

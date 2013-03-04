@@ -27,6 +27,7 @@ subject to the following restrictions:
 #include "BulletCollision/CollisionShapes/btConvexInternalShape.h"
 #include "BulletCollision/NarrowPhaseCollision/btGjkEpa2.h"
 #include <string.h> //for memset
+#include <set>
 //
 // btSymMatrix
 //
@@ -315,14 +316,24 @@ static inline btMatrix3x3	ImpulseMatrix(	btScalar dt,
 										  const btMatrix3x3& iwi,
 										  const btVector3& r)
 {
-	return(Diagonal(1/dt)*Add(Diagonal(ima),MassMatrix(imb,iwi,r)).inverse());
+	btMatrix3x3 result = Add(Diagonal(ima),MassMatrix(imb,iwi,r));
+	btAssert( result.isFinite() && !result.isNan() );
+	btAssert( !result.isSingular() );
+	return Diagonal(1/dt)*result.inverse();
+	//return(Diagonal(1/dt)*Add(Diagonal(ima),MassMatrix(imb,iwi,r)).inverse());
 }
 
 //
 static inline btMatrix3x3	ImpulseMatrix(	btScalar ima,const btMatrix3x3& iia,const btVector3& ra,
 										  btScalar imb,const btMatrix3x3& iib,const btVector3& rb)	
 {
-	return(Add(MassMatrix(ima,iia,ra),MassMatrix(imb,iib,rb)).inverse());
+	btMatrix3x3 result = Add(MassMatrix(ima,iia,ra),MassMatrix(imb,iib,rb));
+	btAssert( result.isFinite() && !result.isNan() );
+	btAssert( !result.isSingular() );
+	btMatrix3x3 resultInv = result.inverse();
+	btAssert( resultInv.isFinite() && !resultInv.isNan() );
+	return resultInv;
+	//return(Add(MassMatrix(ima,iia,ra),MassMatrix(imb,iib,rb)).inverse());
 }
 
 //
@@ -682,7 +693,8 @@ struct btSoftColliders
 				joint.m_friction	=	fv.length2()<(rvac*friction*rvac*friction)?1:friction;
 				joint.m_massmatrix	=	ImpulseMatrix(	ba.invMass(),ba.invWorldInertia(),joint.m_rpos[0],
 					bb.invMass(),bb.invWorldInertia(),joint.m_rpos[1]);
-
+				btAssert( joint.m_massmatrix.isFinite() && !joint.m_massmatrix.isNan() );
+				
 				return(true);
 			}
 			return(false);
@@ -706,7 +718,7 @@ struct btSoftColliders
 			///don't collide an anchored cluster with a static/kinematic object
 			if(m_colObjWrap->getCollisionObject()->isStaticOrKinematicObject() && cluster->m_containsAnchor)
 				return;
-
+			
 			btGjkEpaSolver2::sResults	res;		
 			if(btGjkEpaSolver2::SignedDistance(	&cshape,btTransform::getIdentity(),
 				rshape,m_colObjWrap->getWorldTransform(),
@@ -754,12 +766,30 @@ struct btSoftColliders
 	struct	CollideCL_SS : ClusterBase
 	{
 		btSoftBody*	bodies[2];
+		std::set<btSoftBody::Cluster*> debugBreakClusters;
 		void		Process(const btDbvtNode* la,const btDbvtNode* lb)
 		{
 			btSoftBody::Cluster*		cla=(btSoftBody::Cluster*)la->data;
 			btSoftBody::Cluster*		clb=(btSoftBody::Cluster*)lb->data;
+			
+#ifdef BT_DEBUG
+			bool setDebugBreakFlagOnJoint = false;
+			bool debugA=false, debugB=false;
+			if ( debugBreakClusters.count(cla) > 0 ) {
+				debugA = true;
+			}
+			if ( debugBreakClusters.count(clb) > 0 ) {
+				debugB = true;
+			}
+			if ( debugA && debugB )
+			{
+				//printf(" clusters %8x and %8x colliding\n", cla, clb );
+				setDebugBreakFlagOnJoint = true;
+			}
+#endif
+			
 
-
+			
 			bool connected=false;
 			if ((bodies[0]==bodies[1])&&(bodies[0]->m_clusterConnectivity.size()))
 			{
@@ -775,13 +805,20 @@ struct btSoftColliders
 					&csb,btTransform::getIdentity(),
 					cla->m_com-clb->m_com,res))
 				{
+					//printf(" clusters %8x and %8x signed distance: %f\n", cla, clb, res.distance );
 					btSoftBody::CJoint	joint;
 					if(SolveContact(res,cla,clb,joint))
 					{
+						//printf(" clusters %8x and %8x solved contact\n", cla, clb );
 						btSoftBody::CJoint*	pj=new(btAlignedAlloc(sizeof(btSoftBody::CJoint),16)) btSoftBody::CJoint();
 						*pj=joint;bodies[0]->m_joints.push_back(pj);
 						pj->m_erp	*=	btMax(bodies[0]->m_cfg.kSSHR_CL,bodies[1]->m_cfg.kSSHR_CL);
+						// use average split; need to invert the split from the other cluster
+						pj->m_split = (bodies[0]->m_cfg.kSS_SPLT_CL + (1.0f-bodies[1]->m_cfg.kSS_SPLT_CL)) /2;
 						pj->m_split	*=	(bodies[0]->m_cfg.kSS_SPLT_CL+bodies[1]->m_cfg.kSS_SPLT_CL)/2;
+#ifdef BT_DEBUG
+						pj->m_debugBreak = setDebugBreakFlagOnJoint;
+#endif
 					}
 				}
 			} else

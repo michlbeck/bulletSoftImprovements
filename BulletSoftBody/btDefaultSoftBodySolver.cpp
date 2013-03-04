@@ -71,6 +71,7 @@ void btDefaultSoftBodySolver::solveConstraints( float solverdt )
 		if (psb->isActive())
 		{
 			psb->solveConstraints();
+			btAssert( psb->detectNanInf() );
 		}
 	}	
 } // btDefaultSoftBodySolver::solveConstraints

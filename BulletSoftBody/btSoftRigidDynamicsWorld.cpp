@@ -82,10 +82,21 @@ void	btSoftRigidDynamicsWorld::predictUnconstraintMotion(btScalar timeStep)
 
 void	btSoftRigidDynamicsWorld::internalSingleStepSimulation( btScalar timeStep )
 {
+	// check consistency
+	for ( int i=0; i<m_softBodies.size(); i++ )
+	{
+		if ( !m_softBodies[i]->checkConfigConsistency(/* printToConsole*/ true) )
+			printf(" -> btSoftRigidDynamicsWorld: softBody with index %i does not have consistent config\n", i);
+		if ( !m_softBodies[i]->checkElementsConsistency(/*printToConsole*/true) )
+			printf(" -> btSoftRigidDynamicsWorld: ***ERROR*** softBody with index %i has inconsistent elements!\n", i);
+		if ( !m_softBodies[i]->detectNanInf() )
+			printf(" -> btSoftRigidDynamicsWorld: *** softBody with index %i has nan/inf position/velocity of nodes!\n", i );
+	}
 
 	// Let the solver grab the soft bodies and if necessary optimize for it
 	m_softBodySolver->optimize( getSoftBodyArray() );
-
+	
+	
 	if( !m_softBodySolver->checkInitialized() )
 	{
 		btAssert( "Solver initialization failed\n" );
@@ -102,7 +113,7 @@ void	btSoftRigidDynamicsWorld::internalSingleStepSimulation( btScalar timeStep )
 		btSoftBody*	psb=(btSoftBody*)m_softBodies[i];
 		psb->defaultCollisionHandler(psb);
 	}
-
+	
 	///update soft bodies
 	m_softBodySolver->updateSoftBodies( );
 	
@@ -122,7 +133,7 @@ void	btSoftRigidDynamicsWorld::solveSoftBodiesConstraints( btScalar timeStep )
 
 	// Solve constraints solver-wise
 	m_softBodySolver->solveConstraints( timeStep * m_softBodySolver->getTimeScale() );
-
+	
 }
 
 void	btSoftRigidDynamicsWorld::addSoftBody(btSoftBody* body,short int collisionFilterGroup,short int collisionFilterMask)

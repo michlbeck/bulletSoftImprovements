@@ -340,8 +340,9 @@ public:
 	/**@brief Fill the rotational part of an OpenGL matrix and clear the shear/perspective
 	* @param m The array to be filled */
 	void getOpenGLSubMatrix(btScalar *m) const 
-	{
+	{ 
 #if defined (BT_USE_SSE_IN_API) && defined (BT_USE_SSE)
+		btAssert( ((unsigned long)m)%16 == 0 && "m must be 16 byte aligned" );
         __m128 v0 = m_el[0].mVec128;
         __m128 v1 = m_el[1].mVec128;
         __m128 v2 = m_el[2].mVec128;    //  x2 y2 z2 w2
@@ -733,6 +734,24 @@ public:
 	void	deSerializeFloat(const struct	btMatrix3x3FloatData& dataIn);
 
 	void	deSerializeDouble(const struct	btMatrix3x3DoubleData& dataIn);
+	
+	bool	isSingular() const {
+		return determinant() == 0;
+	}
+	
+	bool	isFinite() const {
+		return m_el[0].isFinite() && m_el[1].isFinite() && m_el[2].isFinite();
+	}
+	bool	isNan() const {
+		return m_el[0].isNan() || m_el[1].isNan() || m_el[2].isNan();
+	}
+	
+	char* toString() const {
+		// not threadsafe
+		static char buf[1024];
+		sprintf( buf, "{%s,%s,%s}", m_el[0].toString(), m_el[1].toString(),m_el[2].toString() );
+		return buf;
+	}
 
 };
 

@@ -41,49 +41,53 @@ btPolarDecomposition::btPolarDecomposition(btScalar tolerance, unsigned int maxI
 
 unsigned int btPolarDecomposition::decompose(const btMatrix3x3& a, btMatrix3x3& u, btMatrix3x3& h) const
 {
-  // Use the 'u' and 'h' matrices for intermediate calculations
-  u = a;
-  h = a.inverse();
-
-  for (unsigned int i = 0; i < m_maxIterations; ++i)
-  {
-    const btScalar h_1 = p1_norm(h);
-    const btScalar h_inf = pinf_norm(h);
-    const btScalar u_1 = p1_norm(u);
-    const btScalar u_inf = pinf_norm(u);
-
-    const btScalar h_norm = h_1 * h_inf;
-    const btScalar u_norm = u_1 * u_inf;
-
-    // The matrix is effectively singular so we cannot invert it
-    if (btFuzzyZero(h_norm) || btFuzzyZero(u_norm))
-      break;
-
-    const btScalar gamma = btPow(h_norm / u_norm, 0.25f);
-    const btScalar inv_gamma = 1.0 / gamma;
-
-    // Determine the delta to 'u'
-    const btMatrix3x3 delta = (u * (gamma - 2.0) + h.transpose() * inv_gamma) * 0.5;
-
-    // Update the matrices
-    u += delta;
-    h = u.inverse();
-
-    // Check for convergence
-    if (p1_norm(delta) <= m_tolerance * u_1)
-    {
-      h = u.transpose() * a;
-      h = (h + h.transpose()) * 0.5;
-      return i;
-    }
-  }
-
-  // The algorithm has failed to converge to the specified tolerance, but we
-  // want to make sure that the matrices returned are in the right form.
-  h = u.transpose() * a;
-  h = (h + h.transpose()) * 0.5;
-
-  return m_maxIterations;
+	if ( !a.isSingular() ) {
+		
+		// Use the 'u' and 'h' matrices for intermediate calculations
+		u = a;
+		h = a.inverse();
+		
+		
+		for (unsigned int i = 0; i < m_maxIterations; ++i)
+		{
+			const btScalar h_1 = p1_norm(h);
+			const btScalar h_inf = pinf_norm(h);
+			const btScalar u_1 = p1_norm(u);
+			const btScalar u_inf = pinf_norm(u);
+			
+			const btScalar h_norm = h_1 * h_inf;
+			const btScalar u_norm = u_1 * u_inf;
+			
+			// The matrix is effectively singular so we cannot invert it
+			if (btFuzzyZero(h_norm) || btFuzzyZero(u_norm))
+				break;
+			
+			const btScalar gamma = btPow(h_norm / u_norm, 0.25f);
+			const btScalar inv_gamma = 1.0 / gamma;
+			
+			// Determine the delta to 'u'
+			const btMatrix3x3 delta = (u * (gamma - 2.0) + h.transpose() * inv_gamma) * 0.5;
+			
+			// Update the matrices
+			u += delta;
+			h = u.inverse();
+			
+			// Check for convergence
+			if (p1_norm(delta) <= m_tolerance * u_1)
+			{
+				h = u.transpose() * a;
+				h = (h + h.transpose()) * 0.5;
+				return i;
+			}
+		}
+	}
+	
+	// The algorithm has failed to converge to the specified tolerance, but we
+	// want to make sure that the matrices returned are in the right form.
+	h = u.transpose() * a;
+	h = (h + h.transpose()) * 0.5;
+	
+	return m_maxIterations;
 }
 
 unsigned int btPolarDecomposition::maxIterations() const

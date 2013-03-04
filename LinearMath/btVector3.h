@@ -730,6 +730,21 @@ public:
 		return btVector3( dot(v0), dot(v1), dot(v2));
 #endif
     }
+    
+    bool isNan() const {
+    	return isnan(m_floats[0])||isnan(m_floats[1])||isnan(m_floats[2])||isnan(m_floats[3]);
+    }
+    
+    bool isFinite() const {
+    	return isfinite(m_floats[0]) && isfinite(m_floats[1]) && isfinite(m_floats[2]) && isfinite(m_floats[3]);
+    }
+	
+	char* toString() const {
+		// not threadsafe
+   		static char buf[1024];
+		sprintf( buf, "{%15.3f,%15.3f,%15.3f}", getX(), getY(), getZ() );
+		return buf;
+	}
 };
 
 /**@brief Return the sum of two vectors (Point symantics)*/

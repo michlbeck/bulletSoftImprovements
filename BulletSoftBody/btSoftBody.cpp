@@ -19,6 +19,7 @@ subject to the following restrictions:
 #include "btSoftBodyData.h"
 #include "LinearMath/btSerializer.h"
 
+#include <set>
 
 //
 btSoftBody::btSoftBody(btSoftBodyWorldInfo*	worldInfo,int node_count,  const btVector3* x,  const btScalar* m)
@@ -88,6 +89,8 @@ void	btSoftBody::initDefaults()
 	m_cfg.diterations	=	0;
 	m_cfg.citerations	=	4;
 	m_cfg.collisions	=	fCollision::Default;
+	m_cfg.kTetraPressure	= 0;
+	m_cfg.kHydrostatic	= 0;
 	m_pose.m_bvolume	=	false;
 	m_pose.m_bframe		=	false;
 	m_pose.m_volume		=	0;
@@ -340,19 +343,24 @@ m_tetras.push_back(t);
 }
 
 //
-void			btSoftBody::appendTetra(int node0,
-										int node1,
-										int node2,
-										int node3,
+void			btSoftBody::appendTetra(unsigned int node0,
+										unsigned int node1,
+										unsigned int node2,
+										unsigned int node3,
 										Material* mat)
 {
 	appendTetra(-1,mat);
 	Tetra&	t=m_tetras[m_tetras.size()-1];
+	btAssert(node0<m_nodes.size());
+	btAssert(node1<m_nodes.size());
+	btAssert(node2<m_nodes.size());
+	btAssert(node3<m_nodes.size());
 	t.m_n[0]	=	&m_nodes[node0];
 	t.m_n[1]	=	&m_nodes[node1];
 	t.m_n[2]	=	&m_nodes[node2];
 	t.m_n[3]	=	&m_nodes[node3];
 	t.m_rv		=	VolumeOf(t.m_n[0]->m_x,t.m_n[1]->m_x,t.m_n[2]->m_x,t.m_n[3]->m_x);
+	
 	m_bUpdateRtCst=true;
 }
 
@@ -693,7 +701,7 @@ btScalar		btSoftBody::getTotalMass() const
 }
 
 //
-void			btSoftBody::setTotalMass(btScalar mass,bool fromfaces)
+void			btSoftBody::setTotalMass(btScalar mass,bool fromfaces, bool onlyUpdateLinkMassConstants)
 {
 	int i;
 
@@ -726,7 +734,10 @@ void			btSoftBody::setTotalMass(btScalar mass,bool fromfaces)
 	{
 		m_nodes[i].m_im/=itm*mass;
 	}
-	m_bUpdateRtCst=true;
+	if ( onlyUpdateLinkMassConstants )
+		updateLinkConstants();
+	else
+		m_bUpdateRtCst=true;
 }
 
 //
@@ -738,31 +749,31 @@ void			btSoftBody::setTotalDensity(btScalar density)
 //
 void			btSoftBody::setVolumeMass(btScalar mass)
 {
-btAlignedObjectArray<btScalar>	ranks;
-ranks.resize(m_nodes.size(),0);
-int i;
-
-for(i=0;i<m_nodes.size();++i)
+	btAlignedObjectArray<btScalar>	ranks;
+	ranks.resize(m_nodes.size(),0);
+	int i;
+	
+	for(i=0;i<m_nodes.size();++i)
 	{
-	m_nodes[i].m_im=0;
+		m_nodes[i].m_im=0;
 	}
-for(i=0;i<m_tetras.size();++i)
+	for(i=0;i<m_tetras.size();++i)
 	{
-	const Tetra& t=m_tetras[i];
-	for(int j=0;j<4;++j)
+		const Tetra& t=m_tetras[i];
+		for(int j=0;j<4;++j)
 		{
-		t.m_n[j]->m_im+=btFabs(t.m_rv);
-		ranks[int(t.m_n[j]-&m_nodes[0])]+=1;
+			t.m_n[j]->m_im+=btFabs(t.m_rv);
+			ranks[int(t.m_n[j]-&m_nodes[0])]+=1;
 		}
 	}
-for( i=0;i<m_nodes.size();++i)
+	for( i=0;i<m_nodes.size();++i)
 	{
-	if(m_nodes[i].m_im>0)
+		if(m_nodes[i].m_im>0)
 		{
-		m_nodes[i].m_im=ranks[i]/m_nodes[i].m_im;
+			m_nodes[i].m_im=ranks[i]/m_nodes[i].m_im;
 		}
 	}
-setTotalMass(mass,false);
+	setTotalMass(mass,false);
 }
 
 //
@@ -926,8 +937,21 @@ void				btSoftBody::resetLinkRestLengths()
 btScalar		btSoftBody::getVolume() const
 {
 	btScalar	vol=0;
-	if(m_nodes.size()>0)
+/*	if(m_tetras.size()>0)
 	{
+		for ( int i=0; i<m_tetras.size(); i++ ) {
+			const Tetra& t = m_tetras[i];
+			const btVector3& a = t.m_n[0]->m_x;
+			const btVector3& b = t.m_n[1]->m_x;
+			const btVector3& c = t.m_n[2]->m_x;
+			const btVector3& d = t.m_n[3]->m_x;
+			vol += fabs( (a-b).dot((b-d).cross(c-d)));
+		}
+		vol/=(btScalar)6;
+	}
+	else*/ if(m_nodes.size()>0)
+	{
+		
 		int i,ni;
 
 		const btVector3	org=m_nodes[0].m_x;
@@ -977,6 +1001,9 @@ void			btSoftBody::clusterVImpulse(Cluster* cluster,const btVector3& rpos,const 
 	const btVector3	ai=cluster->m_invwi*btCross(rpos,impulse);
 	cluster->m_vimpulses[0]+=li;cluster->m_lv+=li;
 	cluster->m_vimpulses[1]+=ai;cluster->m_av+=ai;
+	btAssert( cluster->m_av.isFinite() && !cluster->m_av.isNan() );
+	btAssert( cluster->m_vimpulses[0].isFinite() && !cluster->m_vimpulses[0].isNan() );
+	btAssert( cluster->m_vimpulses[1].isFinite() && !cluster->m_vimpulses[1].isNan() );
 	cluster->m_nvimpulses++;
 }
 
@@ -1002,6 +1029,7 @@ void			btSoftBody::clusterVAImpulse(Cluster* cluster,const btVector3& impulse)
 {
 	const btVector3	ai=cluster->m_invwi*impulse;
 	cluster->m_vimpulses[1]+=ai;cluster->m_av+=ai;
+	btAssert( cluster->m_av.isFinite() && !cluster->m_av.isNan() );
 	cluster->m_nvimpulses++;
 }
 
@@ -1194,6 +1222,7 @@ int				btSoftBody::generateClusters(int k,int maxiterations)
 	int i;
 	releaseClusters();
 	m_clusters.resize(btMin(k,m_nodes.size()));
+	m_clusterGenerationNodeCount = m_nodes.size();
 	for(i=0;i<m_clusters.size();++i)
 	{
 		m_clusters[i]			=	new(btAlignedAlloc(sizeof(Cluster),16)) Cluster();
@@ -1709,7 +1738,32 @@ bool			btSoftBody::rayTest(const btVector3& rayFrom,
 	return(rayTest(rayFrom,rayTo,results.fraction,results.feature,results.index,false)!=0);
 }
 
-//
+const char*		btSoftBody::sRayCast::getFeatureName() const {
+	const char*	featureName = "unknown";
+	switch( feature ) {
+		case btSoftBody::eFeature::Node:
+			featureName = "node";
+			break;
+		case btSoftBody::eFeature::Tetra:
+			featureName = "tetra";
+			break;
+		case btSoftBody::eFeature::Face:
+			featureName = "face";
+			break;
+		case btSoftBody::eFeature::Link:
+			featureName = "face";
+			break;
+		case btSoftBody::eFeature::None:
+			featureName = "none";
+			break;
+		default:
+			featureName = "unknown";
+			break;
+	}
+	return featureName;
+}
+
+	//
 void			btSoftBody::setSolver(eSolverPresets::_ preset)
 {
 	m_cfg.m_vsequence.clear();
@@ -1875,7 +1929,7 @@ void			btSoftBody::solveConstraints()
 			n.m_x	=	n.m_q+n.m_v*m_sst.sdt;
 		}
 	}
-	/* Solve positions		*/ 
+	/* Solve positions		*/
 	if(m_cfg.piterations>0)
 	{
 		for(int isolve=0;isolve<m_cfg.piterations;++isolve)
@@ -1891,10 +1945,11 @@ void			btSoftBody::solveConstraints()
 		{
 			Node&	n=m_nodes[i];
 			n.m_v	=	(n.m_x-n.m_q)*vc;
-			n.m_f	=	btVector3(0,0,0);		
+			// clamp velocities here?
+			n.m_f	=	btVector3(0,0,0);
 		}
 	}
-	/* Solve drift			*/ 
+	/* Solve drift			*/
 	if(m_cfg.diterations>0)
 	{
 		const btScalar	vcf=m_cfg.kVCF*m_sst.isdt;
@@ -1916,7 +1971,7 @@ void			btSoftBody::solveConstraints()
 			n.m_v	+=	(n.m_x-n.m_q)*vcf;
 		}
 	}
-	/* Apply clusters		*/ 
+	/* Apply clusters		*/
 	dampClusters();
 	applyClusters(true);
 }
@@ -2035,6 +2090,233 @@ btScalar			btSoftBody::RayFromToCaster::rayFromToTriangle(	const btVector3& rayF
 	return(-1);
 }
 
+
+/// check consistency of internal state, make sure cfg makes sense
+bool btSoftBody::checkConfigConsistency( bool log )
+{
+	bool consistent = true;
+	// check volume conservation
+	if ( m_cfg.kVC>0 && (m_pose.m_volume==0 || !m_pose.m_bvolume) )
+	{
+		if ( log )
+			printf( "btSoftBody::checkConfigConsistency: kVC is >0 but stored pose has no volume: did you forget to call setPose( true, ... )?\n");
+		consistent = false;
+	}
+	if ( m_cfg.kMT>0 && m_pose.m_bframe )
+	{
+		if ( log )
+			printf( "btSoftBody::checkConfigConsistency: kMT is >0 but stored pose has no frame: did you forget to call setPose( ..., true )?");
+		consistent = false;
+	}
+	
+	if ( m_clusters.size()>0 && m_cfg.citerations==0 )
+	{
+		if ( log )
+			printf("btSoftBody::checkConfigConsistency: has clusters but m_cfg.citerations is 0\n");
+		consistent = false;
+	}
+	if ( m_clusters.size()==0 && ( m_cfg.collisions & fCollision::CL_RS || m_cfg.collisions & fCollision::CL_SS || m_cfg.collisions & fCollision::CL_SELF ) )
+	{
+		if ( log )
+			printf( "btSoftBody::checkConfigConsistency: cluster collisions enabled but has no clusters; did you forget to call generateClusters()?\n");
+		consistent = false;
+	}
+	if ( m_clusters.size()>0 && !( m_cfg.collisions & fCollision::CL_RS || m_cfg.collisions & fCollision::CL_SS || m_cfg.collisions & fCollision::CL_SELF ) )
+	{
+		if ( log )
+			printf( "btSoftBody::checkConfigConsistency: has clusters but cluster collisions are not enabled; did you forget to set m_cfg.collisions to fCollision::CL_RS, CL_SS or CL_SELF?\n");
+		consistent = false;
+	}
+	
+	if ( getTotalMass()==0 )
+	{
+		if ( log )
+			printf("btSoftBody::checkConfigConsistency: body has no mass, collisions probably won't work");
+		consistent = false;
+	}
+	
+	return consistent;
+}
+
+/// check consistency of elements: make sure links, tetras and clusters point to valid objects
+bool btSoftBody::nodePointerIsValid( Node* n )
+{
+	int index = n - &(m_nodes[0]);
+	return ( index >= 0 && index < m_nodes.size() );
+}
+
+bool btSoftBody::checkElementsConsistency( bool log )
+{
+	bool linksGood = true;
+	for ( int i=0; i<m_links.size(); i++ )
+	{
+		linksGood &= nodePointerIsValid(m_links[i].m_n[0]);
+		linksGood &= nodePointerIsValid(m_links[i].m_n[1]);
+	}
+	if ( log && !linksGood )
+		printf("btSoftBody::checkElementsConsistency: m_links contains a bad node pointer\n");
+	
+	bool facesGood = true;
+	for ( int i=0; i<m_faces.size(); i++ )
+	{
+		facesGood &= nodePointerIsValid(m_faces[i].m_n[0]);
+		facesGood &= nodePointerIsValid(m_faces[i].m_n[1]);
+		facesGood &= nodePointerIsValid(m_faces[i].m_n[2]);
+	}
+	if ( log && !facesGood )
+		printf("btSoftBody::checkElementsConsistency: m_faces contains a bad node pointer\n");
+	
+	bool tetrasGood = true;
+	for ( int i=0; i<m_tetras.size(); i++ )
+	{
+		tetrasGood &= nodePointerIsValid(m_tetras[i].m_n[0]);
+		tetrasGood &= nodePointerIsValid(m_tetras[i].m_n[1]);
+		tetrasGood &= nodePointerIsValid(m_tetras[i].m_n[2]);
+		tetrasGood &= nodePointerIsValid(m_tetras[i].m_n[3]);
+	}
+	if ( log && !tetrasGood )
+		printf("btSoftBody::checkElementsConsistency: m_tetras contains a bad node pointer\n");
+	
+	bool clustersGood = true;
+	for ( int i=0; i<m_clusters.size(); i++ )
+	{
+		for ( int j=0; j<m_clusters[i]->m_nodes.size(); j++ )
+			clustersGood &= nodePointerIsValid(m_clusters[i]->m_nodes[j]);
+	}
+	if ( log && !clustersGood )
+		printf("btSoftBody::checkElementsConsistency: m_clusters contains a bad node pointer\n");
+	
+	bool anchorsGood = true;
+	bool anchorsDupe = false;
+	std::set<Node*> anchorNodes;
+	for ( int i=0; i<m_anchors.size(); i++ )
+	{
+		Node* node = m_anchors[i].m_node;
+		anchorsGood &= nodePointerIsValid(node);
+		if ( anchorNodes.find(node) != anchorNodes.end() )
+			anchorsDupe = true;
+		anchorNodes.insert(node);
+	}
+	if ( log && !anchorsGood )
+		printf("btSoftBody::checkElementsConsistency: m_clusters contains a bad node pointer\n");
+	if ( log && anchorsDupe )
+		printf("btSoftBody::checkElementsConsistency: m_anchors contains duplicate anchors for node[s], not good\n");
+	anchorsGood &= !anchorsDupe;
+	
+	return linksGood && facesGood && tetrasGood && clustersGood;
+}
+
+bool				btSoftBody::detectNanInf( const Node& n )
+{
+	bool posNan = false;
+	bool posInf = false;
+	bool velNan = false;
+	bool velInf = false;
+	bool forceNan = false;
+	bool forceInf = false;
+	posNan |= isnan( n.m_x.x() );
+	posNan |= isnan( n.m_x.y() );
+	posNan |= isnan( n.m_x.z() );
+	posInf |= !isfinite( n.m_x.x() );
+	posInf |= !isfinite( n.m_x.y() );
+	posInf |= !isfinite( n.m_x.z() );
+	
+	velNan |= isnan( n.m_v.x() );
+	velNan |= isnan( n.m_v.y() );
+	velNan |= isnan( n.m_v.z() );
+	velInf |= !isfinite( n.m_v.x() );
+	velInf |= !isfinite( n.m_v.y() );
+	velInf |= !isfinite( n.m_v.z() );
+	
+	forceNan |= isnan( n.m_f.x() );
+	forceNan |= isnan( n.m_f.y() );
+	forceNan |= isnan( n.m_f.z() );
+	forceInf |= !isfinite( n.m_f.x() );
+	forceInf |= !isfinite( n.m_f.y() );
+	forceInf |= !isfinite( n.m_f.z() );
+	
+	return !(posInf || posNan || velInf || velNan || forceInf || forceNan);
+}
+
+bool				btSoftBody::detectNanInf( bool log )
+{
+	
+	float maxVelMag = 0;
+	float maxForceMag = 0;
+	bool posNan = false;
+	bool posInf = false;
+	for ( int i=0; i<m_nodes.size(); i++) {
+		const Node& n = m_nodes[i];
+		posNan |= isnan( n.m_x.x() );
+		posNan |= isnan( n.m_x.y() );
+		posNan |= isnan( n.m_x.z() );
+		posInf |= !isfinite( n.m_x.x() );
+		posInf |= !isfinite( n.m_x.y() );
+		posInf |= !isfinite( n.m_x.z() );
+	}
+	if ( log ) {
+		if ( posInf )
+			printf("btSoftBody::detectNanInf: one or more pos elements were inf\n");
+		if ( posNan )
+			printf("btSoftBody::detectNanInf: one or more pos elements were nan\n");
+	}
+	bool velNan = false;
+	bool velInf = false;
+	bool forceNan = false;
+	bool forceInf = false;
+	for ( int i=0; i<m_nodes.size(); i++) {
+		const Node& n = m_nodes[i];
+		
+		bool thisVelNan = false, thisVelInf = false;
+		bool thisForceNan = false, thisForceInf = false;
+		
+		thisVelNan |= isnan( n.m_v.x() );
+		thisVelNan |= isnan( n.m_v.y() );
+		thisVelNan |= isnan( n.m_v.z() );
+		thisVelInf |= !isfinite( n.m_v.x() );
+		thisVelInf |= !isfinite( n.m_v.y() );
+		thisVelInf |= !isfinite( n.m_v.z() );
+		if ( !thisVelNan && !thisVelInf )
+		{
+			float velMag = n.m_v.length();
+			if ( i==0 || velMag > maxVelMag )
+				maxVelMag = velMag;
+		}
+		thisForceNan |= isnan( n.m_f.x() );
+		thisForceNan |= isnan( n.m_f.y() );
+		thisForceNan |= isnan( n.m_f.z() );
+		thisForceInf |= !isfinite( n.m_f.x() );
+		thisForceInf |= !isfinite( n.m_f.y() );
+		thisForceInf |= !isfinite( n.m_f.z() );
+		if ( !thisForceNan && !thisForceInf )
+		{
+			float forceMag = n.m_f.length();
+			if ( i==0 || forceMag > maxForceMag )
+				maxForceMag = forceMag;
+		}
+		velInf |= thisVelInf;
+		forceInf |= thisForceInf;
+		velNan |= thisVelNan;
+		forceNan |= thisForceNan;
+		
+	}
+	if ( log ) {
+		if ( velInf )
+			printf("btSoftBody::detectNanInf: one or more vel elements were inf\n");
+		if ( velNan )
+			printf("btSoftBody::detectNanInf: one or more vel elements were nan\n");
+		if ( forceInf )
+			printf("btSoftBody::detectNanInf: one or more force elements were inf\n");
+		if ( forceNan )
+			printf("btSoftBody::detectNanInf: one or more force elements were nan\n");
+		//printf("btSoftBody::detectNanInf: max velocity magnitude %9.7f, max force magnitude %9.7f\n", maxVelMag, maxForceMag );
+	}
+	return !(posInf || posNan || velInf || velNan || forceInf || forceNan);
+	
+}
+
+
+
 //
 void				btSoftBody::pointersToIndices()
 {
@@ -2053,6 +2335,8 @@ void				btSoftBody::pointersToIndices()
 	{
 		m_links[i].m_n[0]=PTR2IDX(m_links[i].m_n[0],base);
 		m_links[i].m_n[1]=PTR2IDX(m_links[i].m_n[1],base);
+		assert((uint32_t)m_links[i].m_n[0] < m_nodes.size() );
+		assert((uint32_t)m_links[i].m_n[1] < m_nodes.size() );
 	}
 	for(i=0,ni=m_faces.size();i<ni;++i)
 	{
@@ -2063,6 +2347,16 @@ void				btSoftBody::pointersToIndices()
 		{
 			m_faces[i].m_leaf->data=*(void**)&i;
 		}
+		assert((uint32_t)m_faces[i].m_n[0] < m_nodes.size() );
+		assert((uint32_t)m_faces[i].m_n[1] < m_nodes.size() );
+		assert((uint32_t)m_faces[i].m_n[2] < m_nodes.size() );
+	}
+	for(i=0,ni=m_tetras.size();i<ni;++i)
+	{
+		m_tetras[i].m_n[0]=PTR2IDX(m_tetras[i].m_n[0],base);
+		m_tetras[i].m_n[1]=PTR2IDX(m_tetras[i].m_n[1],base);
+		m_tetras[i].m_n[2]=PTR2IDX(m_tetras[i].m_n[2],base);
+		m_tetras[i].m_n[3]=PTR2IDX(m_tetras[i].m_n[3],base);
 	}
 	for(i=0,ni=m_anchors.size();i<ni;++i)
 	{
@@ -2074,6 +2368,19 @@ void				btSoftBody::pointersToIndices()
 		{
 			m_notes[i].m_nodes[j]=PTR2IDX(m_notes[i].m_nodes[j],base);
 		}
+	}
+	for(i=0,ni=m_clusters.size();i<ni;i++ )
+	{
+		for ( int j=0;j<m_clusters[i]->m_nodes.size(); j++ )
+			m_clusters[i]->m_nodes[j]=PTR2IDX(m_clusters[i]->m_nodes[j],base);
+	}
+	for(i=0,ni=m_rcontacts.size();i<ni;++i)
+	{
+		m_rcontacts[i].m_node = PTR2IDX(m_rcontacts[i].m_node,base);
+	}
+	for(i=0,ni=m_scontacts.size();i<ni;++i)
+	{
+		m_scontacts[i].m_node = PTR2IDX(m_scontacts[i].m_node,base);
 	}
 #undef	PTR2IDX
 }
@@ -2108,6 +2415,13 @@ void				btSoftBody::indicesToPointers(const int* map)
 			m_faces[i].m_leaf->data=&m_faces[i];
 		}
 	}
+	for(i=0,ni=m_tetras.size();i<ni;++i)
+	{
+		m_tetras[i].m_n[0]=IDX2PTR(m_tetras[i].m_n[0],base);
+		m_tetras[i].m_n[1]=IDX2PTR(m_tetras[i].m_n[1],base);
+		m_tetras[i].m_n[2]=IDX2PTR(m_tetras[i].m_n[2],base);
+		m_tetras[i].m_n[3]=IDX2PTR(m_tetras[i].m_n[3],base);
+	}
 	for(i=0,ni=m_anchors.size();i<ni;++i)
 	{
 		m_anchors[i].m_node=IDX2PTR(m_anchors[i].m_node,base);
@@ -2118,6 +2432,19 @@ void				btSoftBody::indicesToPointers(const int* map)
 		{
 			m_notes[i].m_nodes[j]=IDX2PTR(m_notes[i].m_nodes[j],base);
 		}
+	}
+	for(i=0,ni=m_clusters.size();i<ni;i++ )
+	{
+		for ( int j=0;j<m_clusters[i]->m_nodes.size(); j++ )
+			m_clusters[i]->m_nodes[j]=IDX2PTR(m_clusters[i]->m_nodes[j],base);
+	}
+	for(i=0,ni=m_rcontacts.size();i<ni;++i)
+	{
+		m_rcontacts[i].m_node = IDX2PTR(m_rcontacts[i].m_node,base);
+	}
+	for(i=0,ni=m_scontacts.size();i<ni;++i)
+	{
+		m_scontacts[i].m_node = IDX2PTR(m_scontacts[i].m_node,base);
 	}
 #undef	IDX2PTR
 }
@@ -2245,7 +2572,7 @@ bool				btSoftBody::checkContact(	const btCollisionObjectWrapper* colObjWrap,
 			shp,
 			nrm,
 			margin);
-	if(dst<0)
+	if(dst<0 && colObjWrap->getCollisionObject()->hasContactResponse() )
 	{
 		cti.m_colObj = colObjWrap->getCollisionObject();
 		cti.m_normal = wtr.getBasis()*nrm;
@@ -2454,7 +2781,7 @@ void				btSoftBody::updateConstants()
 void					btSoftBody::initializeClusters()
 {
 	int i;
-
+	
 	for( i=0;i<m_clusters.size();++i)
 	{
 		Cluster&	c=*m_clusters[i];
@@ -2477,42 +2804,79 @@ void					btSoftBody::initializeClusters()
 		c.m_lv			=	btVector3(0,0,0);
 		c.m_av			=	btVector3(0,0,0);
 		c.m_leaf		=	0;
-		/* Inertia	*/ 
-		btMatrix3x3&	ii=c.m_locii;
-		ii[0]=ii[1]=ii[2]=btVector3(0,0,0);
-		{
-			int i,ni;
-
-			for(i=0,ni=c.m_nodes.size();i<ni;++i)
-			{
-				const btVector3	k=c.m_nodes[i]->m_x-c.m_com;
-				const btVector3	q=k*k;
-				const btScalar	m=c.m_masses[i];
-				ii[0][0]	+=	m*(q[1]+q[2]);
-				ii[1][1]	+=	m*(q[0]+q[2]);
-				ii[2][2]	+=	m*(q[0]+q[1]);
-				ii[0][1]	-=	m*k[0]*k[1];
-				ii[0][2]	-=	m*k[0]*k[2];
-				ii[1][2]	-=	m*k[1]*k[2];
-			}
-		}
-		ii[1][0]=ii[0][1];
-		ii[2][0]=ii[0][2];
-		ii[2][1]=ii[1][2];
-		
-		ii = ii.inverse();
-
 		/* Frame	*/ 
 		c.m_framexform.setIdentity();
 		c.m_framexform.setOrigin(c.m_com);
 		c.m_framerefs.resize(c.m_nodes.size());
 		{
-			int i;
-			for(i=0;i<c.m_framerefs.size();++i)
+			int k;
+			for(k=0;k<c.m_framerefs.size();++k)
 			{
-				c.m_framerefs[i]=c.m_nodes[i]->m_x-c.m_com;
+				c.m_framerefs[k]=c.m_nodes[k]->m_x-c.m_com;
 			}
 		}
+	}
+	
+	// Inertia: we have to deal with the case where c.m_nodes.size()==1 (-> c.m_locii does not exist with standard algorithm)
+	// Let's work out an average radius-per-node for all the clusters, to use in case c.m_nodes.size()==1
+	btScalar avgRadiusPerNode = 0;
+	int totalNodeCount = 0;
+	for( i=0;i<m_clusters.size();++i) {
+		Cluster&	c=*m_clusters[i];
+		btScalar thisAvgRadius = 0;
+		for ( int k=0; k<c.m_nodes.size(); k++ ) {
+			const btVector3	comDelta=c.m_nodes[k]->m_x-c.m_com;
+			avgRadiusPerNode += comDelta.length();
+		}
+		totalNodeCount += c.m_nodes.size();
+	}
+	avgRadiusPerNode /= totalNodeCount;
+
+	// calculate inertia
+	for( i=0; i<m_clusters.size(); ++i ){
+		Cluster&	c=*m_clusters[i];
+		/* Inertia	*/
+		btMatrix3x3&	ii=c.m_locii;
+		ii[0]=ii[1]=ii[2]=btVector3(0,0,0);
+		{
+			// there is a special case when nk==0 but that is handled below at 'if (ii.isSingular())'
+			int k=0,nk=c.m_nodes.size();
+			
+			for(;k<nk;++k)
+			{
+				const btVector3	comDelta=c.m_nodes[k]->m_x-c.m_com;
+				const btVector3	q=comDelta*comDelta;
+				const btScalar	m=c.m_masses[k];
+				ii[0][0]	+=	m*(q[1]+q[2]);
+				ii[1][1]	+=	m*(q[0]+q[2]);
+				ii[2][2]	+=	m*(q[0]+q[1]);
+				
+				ii[0][1]	-=	m*comDelta[0]*comDelta[1];
+				ii[0][2]	-=	m*comDelta[0]*comDelta[2];
+				ii[1][2]	-=	m*comDelta[1]*comDelta[2];
+			}
+		}
+		ii[1][0]=ii[0][1];
+		ii[2][0]=ii[0][2];
+		ii[2][1]=ii[1][2];
+		btAssert( ii.isFinite() && !ii.isNan() );
+		if ( ii.isSingular() ) {
+			// fallback to a sphere with avg radius
+			btScalar radius = avgRadiusPerNode;
+			// http://en.wikipedia.org/wiki/List_of_moment_of_inertia_tensors
+			btScalar mass = 1.0/c.m_imass;
+			btScalar term = (2.0/5.0)*mass*radius*radius;
+			ii[0].setValue( term, 0, 0 );
+			ii[1].setValue( 0, term, 0 );
+			ii[2].setValue( 0, 0, term );
+		}
+		btAssert( !ii.isSingular() );
+		ii = ii.inverse();
+		
+		printf("cluster %3i with %3i nodes: locii: %s\n", i, c.m_nodes.size(), ii.toString() );
+		
+		
+
 	}
 }
 
@@ -2520,11 +2884,11 @@ void					btSoftBody::initializeClusters()
 void					btSoftBody::updateClusters()
 {
 	BT_PROFILE("UpdateClusters");
-	int i;
+	int clusteri;
 
-	for(i=0;i<m_clusters.size();++i)
+	for(clusteri=0;clusteri<m_clusters.size();++clusteri)
 	{
-		btSoftBody::Cluster&	c=*m_clusters[i];
+		btSoftBody::Cluster&	c=*m_clusters[clusteri];
 		const int				n=c.m_nodes.size();
 		//const btScalar			invn=1/(btScalar)n;
 		if(n)
@@ -2543,7 +2907,10 @@ void					btSoftBody::updateClusters()
 				const btVector3&	b=c.m_framerefs[i];
 				m[0]+=a[0]*b;m[1]+=a[1]*b;m[2]+=a[2]*b;
 			}
+			btAssert( m.isFinite() && !m.isNan() );
 			PolarDecompose(m,r,s);
+			btAssert( r.isFinite() && !r.isNan() );
+			btAssert( s.isFinite() && !s.isNan() );
 			c.m_framexform.setOrigin(c.m_com);
 			c.m_framexform.setBasis(r);		
 			/* Inertia			*/ 
@@ -2578,7 +2945,8 @@ void					btSoftBody::updateClusters()
 			c.m_invwi=c.m_invwi.inverse();
 #endif
 #endif
-			/* Velocities			*/ 
+			btAssert( c.m_invwi.isFinite() && !c.m_invwi.isNan() );
+			/* Velocities			*/
 			c.m_lv=btVector3(0,0,0);
 			c.m_av=btVector3(0,0,0);
 			{
@@ -2709,10 +3077,8 @@ void					btSoftBody::applyClusters(bool drift)
 			}
 		}
 	}
-	for(i=0;i<deltas.size();++i)
-	{
-		if(weights[i]>0) 
-		{
+	for(i=0;i<deltas.size();++i) {
+		if(weights[i]>0) {
 			m_nodes[i].m_x+=deltas[i]/weights[i];
 		}
 	}
@@ -2763,6 +3129,7 @@ void				btSoftBody::LJoint::Prepare(btScalar dt,int iterations)
 	m_rpos[1]		-=	m_bodies[1].xform().getOrigin();
 	m_massmatrix	=	ImpulseMatrix(	m_bodies[0].invMass(),m_bodies[0].invWorldInertia(),m_rpos[0],
 		m_bodies[1].invMass(),m_bodies[1].invWorldInertia(),m_rpos[1]);
+	btAssert( m_massmatrix.isFinite() && !m_massmatrix.isNan() );
 	if(m_split>0)
 	{
 		m_sdrift	=	m_massmatrix*(m_drift*m_split);
@@ -2806,6 +3173,7 @@ void				btSoftBody::AJoint::Prepare(btScalar dt,int iterations)
 	m_drift		*=	btMin(maxdrift,btAcos(Clamp<btScalar>(btDot(m_axis[0],m_axis[1]),-1,+1)));
 	m_drift		*=	m_erp/dt;
 	m_massmatrix=	AngularImpulseMatrix(m_bodies[0].invWorldInertia(),m_bodies[1].invWorldInertia());
+	btAssert( m_massmatrix.isFinite() && !m_massmatrix.isNan() );
 	if(m_split>0)
 	{
 		m_sdrift	=	m_massmatrix*(m_drift*m_split);
@@ -2842,6 +3210,12 @@ void				btSoftBody::AJoint::Terminate(btScalar dt)
 //
 void				btSoftBody::CJoint::Prepare(btScalar dt,int iterations)
 {
+#ifdef BT_DEBUG
+	if ( m_debugBreak ) {
+		// set breakpoint here
+		volatile bool bob = true;
+	}
+#endif
 	Joint::Prepare(dt,iterations);
 	const bool	dodrift=(m_life==0);
 	m_delete=(++m_life)>m_maxlife;
@@ -2864,8 +3238,16 @@ void				btSoftBody::CJoint::Prepare(btScalar dt,int iterations)
 //
 void				btSoftBody::CJoint::Solve(btScalar dt,btScalar sor)
 {
+#ifdef BT_DEBUG
+	if ( m_debugBreak ) {
+		// set breakpoint here
+		volatile bool bob = true;
+	}
+#endif
 	const btVector3		va=m_bodies[0].velocity(m_rpos[0]);
 	const btVector3		vb=m_bodies[1].velocity(m_rpos[1]);
+	btAssert( va.isFinite() && !va.isNan() );
+	btAssert( vb.isFinite() && !vb.isNan() );
 	const btVector3		vrel=va-vb;
 	const btScalar		rvac=btDot(vrel,m_normal);
 	btSoftBody::Impulse	impulse;
@@ -2878,9 +3260,11 @@ void				btSoftBody::CJoint::Solve(btScalar dt,btScalar sor)
 		impulse.m_velocity	+=	iv+fv*m_friction;
 	}
 	impulse.m_velocity=m_massmatrix*impulse.m_velocity*sor;
+	btAssert( impulse.m_velocity.isFinite() && !impulse.m_velocity.isNan() );
 	
 	if (m_bodies[0].m_soft==m_bodies[1].m_soft)
 	{
+		// self collision?
 		if ((impulse.m_velocity.getX() ==impulse.m_velocity.getX())&&(impulse.m_velocity.getY() ==impulse.m_velocity.getY())&&
 			(impulse.m_velocity.getZ() ==impulse.m_velocity.getZ()))
 		{
@@ -2896,20 +3280,28 @@ void				btSoftBody::CJoint::Solve(btScalar dt,btScalar sor)
 				}
 			}
 		}
-	} else
+	}
+	else
 	{
-		m_bodies[0].applyImpulse(-impulse,m_rpos[0]);
-		m_bodies[1].applyImpulse( impulse,m_rpos[1]);
+		// not self collision
+		m_bodies[0].applyImpulse(-impulse * m_split,m_rpos[0]);
+		m_bodies[1].applyImpulse( impulse * (1.0f-m_split),m_rpos[1]);
 	}
 }
 
 //
 void				btSoftBody::CJoint::Terminate(btScalar dt)
 {
+#ifdef BT_DEBUG
+	if ( m_debugBreak ) {
+		// set breakpoint here
+		volatile bool bob = true;
+	}
+#endif
 	if(m_split>0)
 	{
-		m_bodies[0].applyDImpulse(-m_sdrift,m_rpos[0]);
-		m_bodies[1].applyDImpulse( m_sdrift,m_rpos[1]);
+		m_bodies[0].applyDImpulse( -m_sdrift * m_split,       m_rpos[0]);
+		m_bodies[1].applyDImpulse(  m_sdrift * (1.0f-m_split),m_rpos[1]);
 	}
 }
 
@@ -2923,12 +3315,14 @@ void				btSoftBody::applyForces()
 	const btScalar					kDG =			m_cfg.kDG;
 	const btScalar					kPR =			m_cfg.kPR;
 	const btScalar					kVC =			m_cfg.kVC;
+	const btScalar					kHydrostatic =	m_cfg.kHydrostatic;
 	const bool						as_lift =		kLF>0;
 	const bool						as_drag =		kDG>0;
 	const bool						as_pressure =	kPR!=0;
 	const bool						as_volume =		kVC>0;
 	const bool						as_aero =		as_lift	||
 													as_drag		;
+	const bool						as_hydrostatic = m_cfg.kHydrostatic>0;
 	//const bool						as_vaero =		as_aero	&&
 	//												(m_cfg.aeromodel < btSoftBody::eAeroModel::F_TwoSided);
 	//const bool						as_faero =		as_aero	&&
@@ -2948,7 +3342,24 @@ void				btSoftBody::applyForces()
 	}
 	/* Per vertex forces			*/ 
 	int i,ni;
-
+	
+	// calculate hydrostatic height relative to gravity
+	// m_worldInfo->m_gravity
+	btScalar topY = 0;
+	btScalar bottomY = 0;
+	for (i=0,ni=m_nodes.size();i<ni;++i)
+	{
+		btSoftBody::Node& n = m_nodes[i];
+		float y = n.m_x.getY();
+		if ( i==0 || topY > y )
+			topY = y;
+		if ( i==0 || bottomY < y )
+			bottomY = y;
+	}
+	btScalar yRange = bottomY-topY;
+	btScalar hydroVolumeConservationOffset = 1.0f-kHydrostatic;
+	btScalar hydroVolumeConservationScale = kHydrostatic;
+	
 	for(i=0,ni=m_nodes.size();i<ni;++i)
 	{
 		btSoftBody::Node&	n=m_nodes[i];
@@ -2962,24 +3373,46 @@ void				btSoftBody::applyForces()
 			/* Pressure				*/ 
 			if(as_pressure)
 			{
+				// only use nodes that have an area, ie nodes that are part of faces
 				n.m_f	+=	n.m_n*(n.m_area*ivolumetp);
 			}
 			/* Volume				*/ 
 			if(as_volume)
 			{
-				n.m_f	+=	n.m_n*(n.m_area*dvolumetv);
+				float hydroMultiplier = 1;
+				if(as_hydrostatic)
+				{
+					float y = n.m_x.getY();
+					hydroMultiplier = (y-topY)/yRange;
+					// map from 0..1 to 1.0-kHydrostatic..1
+					hydroMultiplier = hydroMultiplier*hydroVolumeConservationScale + hydroVolumeConservationOffset;
+					if ( dvolumetv < 0 )
+						hydroMultiplier = 1.0f-hydroMultiplier;
+					//printf("dvolumetv %f -> hydroMultiplier: %f\n", dvolumetv, hydroMultiplier);
+				}
+				// only use nodes that have an area, ie nodes that are part of faces
+				n.m_f	+=	n.m_n*(n.m_area*dvolumetv*hydroMultiplier);
+			}
+			if(as_hydrostatic)
+			{
+				float y = n.m_x.getY();
+				static const float g = 0.1;
+				// p = rho*g*h;
+				float pressure = kHydrostatic*g*(y-topY);
+				n.m_f += n.m_n*(n.m_area*pressure);
 			}
 		}
 	}
-
-	/* Per face forces				*/ 
+	
+	/* Per face forces				*/
 	for(i=0,ni=m_faces.size();i<ni;++i)
 	{
 	//	btSoftBody::Face&	f=m_faces[i];
 
 		/* Aerodynamics			*/ 
-		addAeroForceToFace(m_windVelocity, i);	
+		addAeroForceToFace(m_windVelocity, i);
 	}
+	
 }
 
 //
@@ -3083,6 +3516,29 @@ void				btSoftBody::PSolve_Links(btSoftBody* psb,btScalar kst,btScalar ti)
 			}
 		}
 	}
+	
+	const btScalar tetraPressure = psb->m_cfg.kTetraPressure;
+	if ( 0) /*tetraPressure > 0 )*/
+	{
+		int i,ni;
+		
+		for ( i=0,ni=psb->m_tetras.size();i<ni;++i)
+		{
+			btSoftBody::Tetra& t = psb->m_tetras[i];
+			btScalar currVolume = fabs(VolumeOf(t.m_n[0]->m_x,t.m_n[1]->m_x,t.m_n[2]->m_x,t.m_n[3]->m_x));
+			btScalar volumeDiff = currVolume/t.m_rv;
+			btScalar scaleRequired = 1.0f-/*powf(volumeDiff, 1.0f/3.0f)*/volumeDiff;
+			btVector3 centre = (t.m_n[0]->m_x+t.m_n[1]->m_x+t.m_n[2]->m_x+t.m_n[3]->m_x)/4;
+			for ( int j=0; j<4; j++ ){
+				btSoftBody::Node& n = *t.m_n[j];
+				btVector3 delta = centre-n.m_x;
+				n.m_x -= delta*scaleRequired*tetraPressure;
+				//printf("volumeDiff %8.3f, scaleRequired %f, applying delta\n" ,volumeDiff, scaleRequired );
+				
+			}
+		}
+	}
+
 }
 
 //
@@ -3096,6 +3552,32 @@ void				btSoftBody::VSolve_Links(btSoftBody* psb,btScalar kst)
 		n[0]->m_v+=	l.m_c3*(j*n[0]->m_im);
 		n[1]->m_v-=	l.m_c3*(j*n[1]->m_im);
 	}
+	
+	/* Per tetra forces */
+	
+	const btScalar tetraPressure = psb->m_cfg.kTetraPressure;
+	if ( 0 ) /*tetraPressure > 0 )*/
+	{
+		int i,ni;
+		
+		for ( i=0,ni=psb->m_tetras.size();i<ni;++i)
+		{
+			btSoftBody::Tetra& t = psb->m_tetras[i];
+			btScalar currVolume = VolumeOf(t.m_n[0]->m_x,t.m_n[1]->m_x,t.m_n[2]->m_x,t.m_n[3]->m_x);
+			btScalar volumeDiff = currVolume/t.m_rv;
+			double pressure = (1.0f-volumeDiff);
+			btVector3 centre = (t.m_n[0]->m_x+t.m_n[1]->m_x+t.m_n[2]->m_x+t.m_n[3]->m_x)/4;
+			for ( int j=0; j<4; j++ ){
+				btSoftBody::Node& n = *t.m_n[j];
+				btVector3 normal = (n.m_x-centre).normalized();
+				btVector3 delta = normal*pressure*tetraPressure;
+				n.m_v += delta*kst*n.m_im;
+				//printf("pressure %8.3f, applying delta (%f,%f,%f)\n" ,pressure, delta.getX(), delta.getY(), delta.getZ() );
+				
+			}
+		}
+	}
+
 }
 
 //
@@ -3185,6 +3667,8 @@ void			btSoftBody::defaultCollisionHandler(btSoftBody* psb)
 			if (this!=psb || psb->m_cfg.collisions&fCollision::CL_SELF)
 			{
 				btSoftColliders::CollideCL_SS	docollide;
+				docollide.debugBreakClusters = this->m_debugBreakClusters;
+				docollide.debugBreakClusters.insert(psb->m_debugBreakClusters.begin(),psb->m_debugBreakClusters.end());
 				docollide.ProcessSoftSoft(this,psb);
 			}
 			

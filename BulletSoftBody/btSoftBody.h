@@ -34,6 +34,7 @@ subject to the following restrictions:
 #define btSoftBodyData	btSoftBodyFloatData
 #define btSoftBodyDataName	"btSoftBodyFloatData"
 //#endif //BT_USE_DOUBLE_PRECISION
+#include <set>
 
 class btBroadphaseInterface;
 class btDispatcher;
@@ -164,6 +165,8 @@ public:
 		eFeature::_	feature;	/// feature type
 		int			index;		/// feature index
 		btScalar	fraction;		/// time of impact fraction (rayorg+(rayto-rayfrom)*fraction)
+		
+		const char* getFeatureName() const; // the name of the feature
 	};
 
 	/* ImplicitFn	*/ 
@@ -340,10 +343,11 @@ public:
 		bool						m_containsAnchor;
 		bool						m_collide;
 		int							m_clusterIndex;
+		bool						m_debugDraw;
 		Cluster() : m_leaf(0),m_ndamping(0),m_ldamping(0),m_adamping(0),m_matching(0) 
 		,m_maxSelfCollisionImpulse(100.f),
 		m_selfCollisionImpulseFactor(0.01f),
-		m_containsAnchor(false)
+		m_containsAnchor(false), m_debugDraw(true)
 		{}
 	};
 	/* Impulse		*/ 
@@ -431,10 +435,15 @@ public:
 		}
 		btVector3					velocity(const btVector3& rpos) const
 		{
-			return(linearVelocity()+angularVelocity(rpos));
+			const btVector3 linearVel= linearVelocity();
+			const btVector3 angularVel= angularVelocity(rpos);
+			btAssert( linearVel.isFinite() && !linearVel.isNan() );
+			btAssert( angularVel.isFinite() && !angularVel.isNan() );
+			return linearVel+ angularVel;
 		}
 		void						applyVImpulse(const btVector3& impulse,const btVector3& rpos) const
 		{
+			btAssert( impulse.isFinite() && !impulse.isNan() );
 			if(m_rigid)	m_rigid->applyImpulse(impulse,rpos);
 			if(m_soft)	btSoftBody::clusterVImpulse(m_soft,rpos,impulse);
 		}
@@ -448,6 +457,7 @@ public:
 			if(impulse.m_asVelocity)	
 			{
 //				printf("impulse.m_velocity = %f,%f,%f\n",impulse.m_velocity.getX(),impulse.m_velocity.getY(),impulse.m_velocity.getZ());
+				btAssert( impulse.m_velocity.isFinite() && !impulse.m_velocity.isNan() );
 				applyVImpulse(impulse.m_velocity,rpos);
 			}
 			if(impulse.m_asDrift)		
@@ -502,11 +512,18 @@ public:
 		btMatrix3x3					m_massmatrix;
 		bool						m_delete;
 		virtual						~Joint() {}
-		Joint() : m_delete(false) {}
+		Joint() : m_delete(false)
+#ifdef BT_DEBUG
+			, m_debugBreak(false)
+#endif
+			{}
 		virtual void				Prepare(btScalar dt,int iterations);
 		virtual void				Solve(btScalar dt,btScalar sor)=0;
 		virtual void				Terminate(btScalar dt)=0;
 		virtual eType::_			Type() const=0;
+#ifdef BT_DEBUG
+		bool						m_debugBreak;
+#endif
 	};
 	/* LJoint		*/ 
 	struct	LJoint : Joint
@@ -565,7 +582,7 @@ public:
 		btScalar				kDG;			// Drag coefficient [0,+inf]
 		btScalar				kLF;			// Lift coefficient [0,+inf]
 		btScalar				kPR;			// Pressure coefficient [-inf,+inf]
-		btScalar				kVC;			// Volume conversation coefficient [0,+inf]
+		btScalar				kVC;			// Volume conservation coefficient [0,+inf]
 		btScalar				kDF;			// Dynamic friction coefficient [0,1]
 		btScalar				kMT;			// Pose matching coefficient [0,1]		
 		btScalar				kCHR;			// Rigid contacts hardness [0,1]
@@ -580,6 +597,8 @@ public:
 		btScalar				kSS_SPLT_CL;	// Soft vs rigid impulse split [0,1] (cluster only)
 		btScalar				maxvolume;		// Maximum volume ratio for pose
 		btScalar				timescale;		// Time scale
+		btScalar				kTetraPressure;	// tetra pressure resolution force coefficient
+		btScalar				kHydrostatic;	// hydrostatic force constant
 		int						viterations;	// Velocities solver iterations
 		int						piterations;	// Positions solver iterations
 		int						diterations;	// Drift solver iterations
@@ -588,6 +607,7 @@ public:
 		tVSolverArray			m_vsequence;	// Velocity solvers sequence
 		tPSolverArray			m_psequence;	// Position solvers sequence
 		tPSolverArray			m_dsequence;	// Drift solvers sequence
+		
 	};
 	/* SolverState	*/ 
 	struct	SolverState
@@ -665,6 +685,8 @@ public:
 	btDbvt					m_fdbvt;		// Faces tree
 	btDbvt					m_cdbvt;		// Clusters tree
 	tClusterArray			m_clusters;		// Clusters
+	std::set<btSoftBody::Cluster*> m_debugBreakClusters; // Clusters that will trigger a break on joint creation
+	unsigned int			m_clusterGenerationNodeCount; // node count at cluster generation -- for debugging
 
 	btAlignedObjectArray<bool>m_clusterConnectivity;//cluster connectivity, for self-collision
 
@@ -685,7 +707,15 @@ public:
 	btSoftBody(	btSoftBodyWorldInfo* worldInfo);
 
 	void	initDefaults();
-
+	
+	/// check consistency of internal state; make sure cfg makes sense
+	bool	checkConfigConsistency( bool printToConsole );
+	/// check consistency of elements: make sure links, faces, tetras and clusters point to valid objects
+	bool	checkElementsConsistency( bool printToConsole );
+	/// look for inf/nan, return true if all good, false means nan/inf detected
+	bool	detectNanInf( bool printToConsole = false );
+	bool	detectNanInf( const Node& n );
+	
 	/* dtor																	*/ 
 	virtual ~btSoftBody();
 	/* Check for existing link												*/ 
@@ -750,10 +780,10 @@ public:
 		Material* mat=0);
 	void			appendTetra(int model,Material* mat);
 	//
-	void			appendTetra(int node0,
-										int node1,
-										int node2,
-										int node3,
+	void			appendTetra(unsigned int node0,
+										unsigned int node1,
+										unsigned int node2,
+										unsigned int node3,
 										Material* mat=0);
 
 
@@ -798,7 +828,7 @@ public:
 	btScalar			getTotalMass() const;
 	/* Set total mass (weighted by previous masses)							*/ 
 	void				setTotalMass(	btScalar mass,
-		bool fromfaces=false);
+		bool fromfaces=false, bool onlyUpdateLinkConstants=false );
 	/* Set total density													*/ 
 	void				setTotalDensity(btScalar density);
 	/* Set volume mass (using tetrahedrons)									*/
@@ -989,6 +1019,8 @@ public:
 
 	//virtual void serializeSingleObject(class btSerializer* serializer) const;
 
+	/// check if the node pointer is valid
+	bool nodePointerIsValid( Node* n );
 
 };
 

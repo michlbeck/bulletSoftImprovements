@@ -173,6 +173,8 @@ void			btSoftBodyHelpers::Draw(	btSoftBody* psb,
 		srand(1806);
 		for(i=0;i<psb->m_clusters.size();++i)
 		{
+			if ( !psb->m_clusters[i]->m_debugDraw )
+				continue;
 			if(psb->m_clusters[i]->m_collide)
 			{
 				btVector3						color(	rand()/(btScalar)RAND_MAX,
@@ -206,7 +208,7 @@ void			btSoftBodyHelpers::Draw(	btSoftBody* psb,
 					while (edge!=firstEdge)
 					{
 						int v2 = edge->getTargetVertex();
-						idraw->drawTriangle(computer.vertices[v0],computer.vertices[v1],computer.vertices[v2],color,1);
+						idraw->drawTriangle(computer.vertices[v0],computer.vertices[v1],computer.vertices[v2],color,0.3f);
 						edge = edge->getNextEdgeOfFace();
 						v0=v1;
 						v1=v2;
@@ -239,7 +241,8 @@ void			btSoftBodyHelpers::Draw(	btSoftBody* psb,
 #if 0
 			for(int j=0;j<psb->m_clusters[i].m_nodes.size();++j)
 			{
-				const btSoftBody::Cluster&	c=psb->m_clusters[i];
+				if ( !psb->m_clusters[i]->m_debugDraw )
+					continue;			const btSoftBody::Cluster&	c=psb->m_clusters[i];
 				const btVector3				r=c.m_nodes[j]->m_x-c.m_com;
 				const btVector3				v=c.m_lv+btCross(c.m_av,r);
 				idraw->drawLine(c.m_nodes[j]->m_x,c.m_nodes[j]->m_x+v,btVector3(1,0,0));
@@ -250,6 +253,18 @@ void			btSoftBodyHelpers::Draw(	btSoftBody* psb,
 	//		idraw->drawLine(c.m_com,c.m_framexform*btVector3(10,0,0),btVector3(1,0,0));
 	//		idraw->drawLine(c.m_com,c.m_framexform*btVector3(0,10,0),btVector3(0,1,0));
 	//		idraw->drawLine(c.m_com,c.m_framexform*btVector3(0,0,10),btVector3(0,0,1));
+			/* Normals	*/ 
+			if(0!=(drawflags&fDrawFlags::Normals))
+			{
+				for(j=0;j<psb->m_nodes.size();++j)
+				{
+					const btSoftBody::Node&	n=psb->m_nodes[j];
+					if(0==(n.m_material->m_flags&btSoftBody::fMaterial::DebugDraw)) continue;
+					const btVector3			d=n.m_n*nscl;
+					idraw->drawLine(n.m_x,n.m_x+d,ncolor);
+					//idraw->drawLine(n.m_x,n.m_x-d,ncolor*0.5);
+				}
+			}
 		}
 	}
 	else
@@ -949,8 +964,9 @@ static int nextLine(const char* buffer)
 	return numBytesRead;
 }
 
-/* Create from TetGen .ele, .face, .node data							*/ 
-btSoftBody*	btSoftBodyHelpers::CreateFromTetGenData(btSoftBodyWorldInfo& worldInfo,
+
+/* Create from TetGen .ele, .face, .node data							*/
+static btSoftBody*	CreateFromTetGenData(btSoftBodyWorldInfo& worldInfo,
 													const char* ele,
 													const char* face,
 													const char* node,

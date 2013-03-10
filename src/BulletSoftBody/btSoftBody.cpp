@@ -20,6 +20,7 @@ subject to the following restrictions:
 #include "LinearMath/btSerializer.h"
 
 #include <set>
+#include <cmath>
 
 //
 btSoftBody::btSoftBody(btSoftBodyWorldInfo*	worldInfo,int node_count,  const btVector3* x,  const btScalar* m)
@@ -2214,26 +2215,26 @@ bool				btSoftBody::detectNanInf( const Node& n )
 	bool velInf = false;
 	bool forceNan = false;
 	bool forceInf = false;
-	posNan |= isnan( n.m_x.x() );
-	posNan |= isnan( n.m_x.y() );
-	posNan |= isnan( n.m_x.z() );
-	posInf |= !isfinite( n.m_x.x() );
-	posInf |= !isfinite( n.m_x.y() );
-	posInf |= !isfinite( n.m_x.z() );
+	posNan |= std::isnan( n.m_x.x() );
+	posNan |= std::isnan( n.m_x.y() );
+	posNan |= std::isnan( n.m_x.z() );
+	posInf |= !std::isfinite( n.m_x.x() );
+	posInf |= !std::isfinite( n.m_x.y() );
+	posInf |= !std::isfinite( n.m_x.z() );
 	
-	velNan |= isnan( n.m_v.x() );
-	velNan |= isnan( n.m_v.y() );
-	velNan |= isnan( n.m_v.z() );
-	velInf |= !isfinite( n.m_v.x() );
-	velInf |= !isfinite( n.m_v.y() );
-	velInf |= !isfinite( n.m_v.z() );
+	velNan |= std::isnan( n.m_v.x() );
+	velNan |= std::isnan( n.m_v.y() );
+	velNan |= std::isnan( n.m_v.z() );
+	velInf |= !std::isfinite( n.m_v.x() );
+	velInf |= !std::isfinite( n.m_v.y() );
+	velInf |= !std::isfinite( n.m_v.z() );
 	
-	forceNan |= isnan( n.m_f.x() );
-	forceNan |= isnan( n.m_f.y() );
-	forceNan |= isnan( n.m_f.z() );
-	forceInf |= !isfinite( n.m_f.x() );
-	forceInf |= !isfinite( n.m_f.y() );
-	forceInf |= !isfinite( n.m_f.z() );
+	forceNan |= std::isnan( n.m_f.x() );
+	forceNan |= std::isnan( n.m_f.y() );
+	forceNan |= std::isnan( n.m_f.z() );
+	forceInf |= !std::isfinite( n.m_f.x() );
+	forceInf |= !std::isfinite( n.m_f.y() );
+	forceInf |= !std::isfinite( n.m_f.z() );
 	
 	return !(posInf || posNan || velInf || velNan || forceInf || forceNan);
 }
@@ -2247,12 +2248,12 @@ bool				btSoftBody::detectNanInf( bool log )
 	bool posInf = false;
 	for ( int i=0; i<m_nodes.size(); i++) {
 		const Node& n = m_nodes[i];
-		posNan |= isnan( n.m_x.x() );
-		posNan |= isnan( n.m_x.y() );
-		posNan |= isnan( n.m_x.z() );
-		posInf |= !isfinite( n.m_x.x() );
-		posInf |= !isfinite( n.m_x.y() );
-		posInf |= !isfinite( n.m_x.z() );
+		posNan |= std::isnan( n.m_x.x() );
+		posNan |= std::isnan( n.m_x.y() );
+		posNan |= std::isnan( n.m_x.z() );
+		posInf |= !std::isfinite( n.m_x.x() );
+		posInf |= !std::isfinite( n.m_x.y() );
+		posInf |= !std::isfinite( n.m_x.z() );
 	}
 	if ( log ) {
 		if ( posInf )
@@ -2270,24 +2271,24 @@ bool				btSoftBody::detectNanInf( bool log )
 		bool thisVelNan = false, thisVelInf = false;
 		bool thisForceNan = false, thisForceInf = false;
 		
-		thisVelNan |= isnan( n.m_v.x() );
-		thisVelNan |= isnan( n.m_v.y() );
-		thisVelNan |= isnan( n.m_v.z() );
-		thisVelInf |= !isfinite( n.m_v.x() );
-		thisVelInf |= !isfinite( n.m_v.y() );
-		thisVelInf |= !isfinite( n.m_v.z() );
+		thisVelNan |= std::isnan( n.m_v.x() );
+		thisVelNan |= std::isnan( n.m_v.y() );
+		thisVelNan |= std::isnan( n.m_v.z() );
+		thisVelInf |= !std::isfinite( n.m_v.x() );
+		thisVelInf |= !std::isfinite( n.m_v.y() );
+		thisVelInf |= !std::isfinite( n.m_v.z() );
 		if ( !thisVelNan && !thisVelInf )
 		{
 			float velMag = n.m_v.length();
 			if ( i==0 || velMag > maxVelMag )
 				maxVelMag = velMag;
 		}
-		thisForceNan |= isnan( n.m_f.x() );
-		thisForceNan |= isnan( n.m_f.y() );
-		thisForceNan |= isnan( n.m_f.z() );
-		thisForceInf |= !isfinite( n.m_f.x() );
-		thisForceInf |= !isfinite( n.m_f.y() );
-		thisForceInf |= !isfinite( n.m_f.z() );
+		thisForceNan |= std::isnan( n.m_f.x() );
+		thisForceNan |= std::isnan( n.m_f.y() );
+		thisForceNan |= std::isnan( n.m_f.z() );
+		thisForceInf |= !std::isfinite( n.m_f.x() );
+		thisForceInf |= !std::isfinite( n.m_f.y() );
+		thisForceInf |= !std::isfinite( n.m_f.z() );
 		if ( !thisForceNan && !thisForceInf )
 		{
 			float forceMag = n.m_f.length();

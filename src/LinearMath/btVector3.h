@@ -17,7 +17,8 @@ subject to the following restrictions:
 #ifndef BT_VECTOR3_H
 #define BT_VECTOR3_H
 
-//#include <stdint.h>
+#include <cmath>
+#include <stdio.h>
 #include "btScalar.h"
 #include "btMinMax.h"
 #include "btAlignedAllocator.h"
@@ -732,11 +733,11 @@ public:
     }
     
     bool isNan() const {
-    	return isnan(m_floats[0])||isnan(m_floats[1])||isnan(m_floats[2])||isnan(m_floats[3]);
+    	return std::isnan(m_floats[0])||std::isnan(m_floats[1])||std::isnan(m_floats[2])||std::isnan(m_floats[3]);
     }
     
     bool isFinite() const {
-    	return isfinite(m_floats[0]) && isfinite(m_floats[1]) && isfinite(m_floats[2]) && isfinite(m_floats[3]);
+    	return std::isfinite(m_floats[0]) && std::isfinite(m_floats[1]) && std::isfinite(m_floats[2]) && std::isfinite(m_floats[3]);
     }
 	
 	char* toString() const {
